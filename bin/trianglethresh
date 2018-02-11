@@ -1,0 +1,432 @@
+#!/bin/bash
+#
+# Developed by Fred Weinhaus 10/29/2008 .......... revised 6/14/2013
+#
+# USAGE: trianglethresh [-g graph] infile outfile
+# USAGE: trianglethresh [-help]
+#
+# OPTIONS:
+#
+# -g	  graph             graph specifies whether to generate a 
+#                           histogram graph image displaying the 
+#                           location and value of the threshold;
+#                           choices are: view or save; 
+#                           default is no graph
+#
+###
+#
+# NAME: TRIANGLETHRESH
+# 
+# PURPOSE: To automatically thresholds an image to binary (b/w) format 
+# using the triangle technique.
+# 
+# DESCRIPTION: TRIANGLETHRESH automatically thresholds an image to binary
+# (b/w) format. It does not assume the histogram is bimodal. It finds the
+# bin with the highest value (the peak in the histogram) and also the end
+# of the histogram furthest from the peak. It then draws a line between
+# the two. It exhaustively searches along the line drawing a perpendicular
+# from the line to the top of each histogram bin and picks the threshold
+# value at that bin for which the perpendicular is the longest.
+# 
+# OPTIONS: 
+# 
+# -g graph ... GRAPH specifies whether to generate a graph (image) of 
+# the histogram, displaying the location and value of the threshold. 
+# The choices are: view, save and none. If graph=view is selected, the 
+# graph will be created and displayed automatically, but not saved. 
+# If graph=save is selected, then the graph will be created and saved 
+# to a file using the infile name, with "_histog_triangle.gif" appended,  
+# but the graph will not be displayed automatically. If -g option is 
+# not specified, then no graph will be created.
+# 
+# NOTE: It is highly recommended that the output not be specified 
+# as a JPG image as that will cause compression and potentially a 
+# non-binary (i.e. a graylevel) result. GIF is the recommended 
+# output format.
+# 
+# REFERENCES: see the following:
+# http://www.ph.tn.tudelft.nl/Courses/FIP/noframes/fip-Segmenta.html
+# 
+# CAVEAT: No guarantee that this script will work on all platforms, 
+# nor that trapping of inconsistent parameters is complete and 
+# foolproof. Use At Your Own Risk. 
+# 
+######
+#
+
+# set default values
+graph=""		#none, save or view
+
+# set directory for temporary files
+dir="."    # suggestions are dir="." or dir="/tmp"
+
+# set up functions to report Usage and Usage with Description
+PROGNAME=`type $0 | awk '{print $3}'`  # search for executable on path
+PROGDIR=`dirname $PROGNAME`            # extract directory of program
+PROGNAME=`basename $PROGNAME`          # base name of program
+usage1() 
+	{
+	echo >&2 ""
+	echo >&2 "$PROGNAME:" "$@"
+	sed >&2 -n '/^###/q;  /^#/!q;  s/^#//;  s/^ //;  4,$p' "$PROGDIR/$PROGNAME"
+	}
+usage2() 
+	{
+	echo >&2 ""
+	echo >&2 "$PROGNAME:" "$@"
+	sed >&2 -n '/^######/q;  /^#/!q;  s/^#*//;  s/^ //;  4,$p' "$PROGDIR/$PROGNAME"
+	}
+
+
+# function to report error messages
+errMsg()
+	{
+	echo ""
+	echo $1
+	echo ""
+	usage1
+	exit 1
+	}
+
+
+# function to test for minus at start of value of second part of option 1 or 2
+checkMinus()
+	{
+	test=`echo "$1" | grep -c '^-.*$'`   # returns 1 if match; 0 otherwise
+    [ $test -eq 1 ] && errMsg "$errorMsg"
+	}
+
+# test for correct number of arguments and get values
+if [ $# -eq 0 ]
+	then
+	# help information
+   echo ""
+   usage2
+   exit 0
+elif [ $# -gt 4 ]
+	then
+	errMsg "--- TOO MANY ARGUMENTS WERE PROVIDED ---"
+else
+	while [ $# -gt 0 ]
+		do
+			# get parameter values
+			case "$1" in
+		  -h|-help)    # help information
+					   echo ""
+					   usage2
+					   exit 0
+					   ;;
+				-g)    # get  graph
+					   shift  # to get the next parameter
+					   # test if parameter starts with minus sign 
+					   errorMsg="--- INVALID GRAPH SPECIFICATION ---"
+					   checkMinus "$1"
+					   graph="$1"
+					   [ "$graph" != "view" -a "$graph" != "save" ] && errMsg "--- GRAPH=$graph MUST BE EITHER VIEW OR SAVE ---"
+					   ;;
+				 -)    # STDIN and end of arguments
+					   break
+					   ;;
+				-*)    # any other - argument
+					   errMsg "--- UNKNOWN OPTION ---"
+					   ;;
+		     	 *)    # end of arguments
+					   break
+					   ;;
+			esac
+			shift   # next option
+	done
+	#
+	# get infile and outfile
+	infile=$1
+	outfile=$2
+fi
+
+# test that infile provided
+[ "$infile" = "" ] && errMsg "NO INPUT FILE SPECIFIED"
+
+# test that outfile provided
+[ "$outfile" = "" ] && errMsg "NO OUTPUT FILE SPECIFIED"
+
+# get outname from infile to use for graph
+inname=`convert $infile -format "%t" info:`
+histfile=${inname}_histog_triangle.gif
+
+tmpA1="$dir/trianglethresh_1_$$.mpc"
+tmpA2="$dir/trianglethresh_1_$$.cache"
+trap "rm -f $tmpA1 $tmpA2; exit 0" 0
+trap "rm -f $tmpA1 $tmpA2 $histfile; exit 1" 1 2 3 15
+
+# get im_version
+im_version=`convert -list configure | \
+	sed '/^LIB_VERSION_NUMBER /!d; s//,/;  s/,/,0/g;  s/,0*\([0-9][0-9]\)/\1/g' | head -n 1`
+
+# colorspace RGB and sRGB swapped between 6.7.5.5 and 6.7.6.7 
+# though probably not resolved until the latter
+# then -colorspace gray changed to linear between 6.7.6.7 and 6.7.8.2 
+# then -separate converted to linear gray channels between 6.7.6.7 and 6.7.8.2,
+# though probably not resolved until the latter
+# so -colorspace HSL/HSB -separate and -colorspace gray became linear
+# but we need to use -set colorspace RGB before using them at appropriate times
+# so that results stay as in original script
+# The following was determined from various version tests using trianglethresh.
+# with IM 6.7.4.10, 6.7.6.10, 6.7.8.10
+if [ "$im_version" -lt "06070607" -o "$im_version" -gt "06070707" ]; then
+	setcspace="-set colorspace RGB"
+else
+	setcspace=""
+fi
+# no need for setcspace for grayscale or channels after 6.8.5.4
+if [ "$im_version" -gt "06080504" ]; then
+	setcspace=""
+fi
+
+
+if convert -quiet -regard-warnings "$infile" $setcspace -colorspace gray +repage "$tmpA1"
+	then
+	: ' do nothing '
+else
+	errMsg "--- FILE $infile DOES NOT EXIST OR IS NOT AN ORDINARY FILE, NOT READABLE OR HAG ZERO SIZE ---"
+fi	
+
+# get totpix in image
+width=`convert $tmpA1 -format "%w" info:`
+height=`convert $tmpA1 -format "%h" info:`
+totpix=`echo "scale=0; $width * $height / 1" | bc`
+
+
+# function to convert IM histogram into two arrays, value and count
+getHistog()
+	{
+	echo "Generate Histogram"
+	img="$1"
+	# get lists of values and counts from histogram
+	# note that IM histograms are not well sorted (and have multiple bins with counts for the same values)
+	value=`convert $img -format %c -depth 8 -define histogram:unique-colors=true histogram:info: | sort -k 2 -b | sed -n 's/^ *[0-9]*: [(]\([0-9 ]*\).*$/\1/ p'`
+	count=`convert $img -format %c -depth 8 -define histogram:unique-colors=true histogram:info: | sort -k 2 -b | sed -n 's/^ *\([0-9]*\): [(].*$/\1/ p'`
+	
+	# put value and count into arrays
+	valueArr=($value)
+	countArr=($count)
+	
+	# check if both arrays are the same size
+	if [ ${#valueArr[*]} -ne ${#countArr[*]} ]
+		then
+			errMsg "--- ARRAY SIZES DO NOT MATCH ---"
+			exit 1
+		else
+		numbins=${#valueArr[*]}
+	fi
+}
+
+
+# function to fill gaps and normalize histog
+getFilledNormlizedHistog()
+	{
+	echo "Fill & Normalize Histogram"
+	# fill in gaps in histogram and normalize counts by total pixels
+	# fill in bins with zero counts
+	i=0
+	while [ $i -lt 256 ]; do
+		if [ $numbins -lt 256 ]; then
+			nvalueArr[$i]=$i
+			ncountArr[$i]=0
+		else
+			nvalueArr[$i]=${valueArr[$i]}
+		fi
+		i=`expr $i + 1`
+	done
+
+	# normalize array
+	j=0
+	while [ $j -lt $numbins ]; do
+		k=${valueArr[$j]}
+		ncountArr[$k]=`echo "scale=10; ${countArr[$j]}/$totpix" | bc`
+		j=`expr $j + 1`
+	done
+
+	# reset numbins
+	orignumbins=$numbins
+	numbins=256
+	}
+
+# function to find start and end bins and bin with highest count
+findSpecialBins()
+	{
+	echo "Compute Parameters"
+	
+	# get first and last non-zero bin
+	# get first bin
+	startbin=${valueArr[0]}
+	startbincount=${ncountArr[0]}
+#echo "startbin=$startbin; startbincount=$startbincount"
+
+	# get last bin
+	lastbin=`expr $orignumbins - 1`
+	endbin=${valueArr[$lastbin]}
+	endbincount=${ncountArr[$lastbin]}
+#echo "lastbin=$lastbin; endbin=$endbin; endbincount=$endbincount"
+
+	# get bin with highest count from unfilled/unnormalized histogram
+	i=0
+	maxbincount=0
+	while [ $i -lt $numbins ]; do
+		test=`echo "${ncountArr[$i]} > $maxbincount" | bc`
+		if [ $test -eq 1 ]; then
+			maxbincount=${ncountArr[$i]}
+			maxbin=$i
+		fi
+#echo "i=$i; count=${ncountArr[$i]}; maxbin=$maxbin; maxbincount=$maxbincount"
+		i=`expr $i + 1`
+	done
+#echo "maxbin=$maxbin; maxbincount=$maxbincount"
+
+	# set x1,y1 for bin with max count
+	y1=$maxbincount
+	x1=$maxbin
+	
+	# set x2,y2 for furthest end bin from bin with max count
+	lowdiff=`expr $maxbin - $startbin`
+	highdiff=`expr $endbin - $maxbin`
+	if [ $lowdiff -ge $highdiff ]; then
+		x2=$startbin
+		y2=0
+	else
+		x2=$endbin
+		y2=0
+	fi
+#echo "x1=$x1; y1=$y1; x2=$x2; y2=$y2"
+	}
+
+# function to compute triangle lines for graphing
+getTriangleLines()
+	{
+	# histogram image scales maxbincount to 200 pixels
+	# counts need to be complemented with 200 
+	# as 0 is at image top and 200 at image bottom
+	
+	# convert y1 and y2 to points on histogram image
+	xx1=$x1
+	yy1=0
+	xx2=$x2
+	yy2=200
+#	echo "xx1=$xx1; yy1=$yy1; xx2=$xx2; yy2=$yy2"
+
+	# convert x0,y0 to point on histogram image
+	xx0=$x0
+	yy0=`echo "scale=10; 200*(1 - $y0/$y1)/1" | bc`
+#echo "y0=$y0; y1=$y1; yy0=$yy0"
+	
+	# find intersection of perpendicular through xx0,yy0 and line between xx1,yy1 and x2,y2
+	# get slope and intercept of line between xx1,yy1 and xx2,yy2
+	sl=`echo "scale=10; ($yy2 - $yy1)/($xx2 - $xx1)" | bc`
+	il=`echo "scale=10; ($yy1 - $sl*$xx1)/1" | bc`
+	
+	# get slope and intercept of perpendicular
+	# slope is negative inverse of that of line between xx1,yy1 and xx2,yy2
+	sp=`echo "scale=10; -1/$sl" | bc`
+	ip=`echo "scale=10; ($yy0 - $sp*$xx0)/1" | bc`
+	
+	# compute intersection point xx3,yy3
+	xx3=`echo "scale=10; ($ip - $il)/($sl - $sp)" | bc`
+	yy3=`echo "scale=10; ($sl*$xx3 + $il)/1" | bc`
+
+#	echo "sl=$sl; il=$il; sp=$sp; ip=$ip; xx3=$xx3; yy3=$yy3"
+#	echo "xx0=$xx0; yy0=$yy0; xx3=$xx3; yy3=$yy3"
+	}
+
+
+
+# process image using k-means approach
+
+echo ""
+getHistog "$tmpA1"
+getFilledNormlizedHistog
+findSpecialBins
+
+
+echo "Compute Threshold"
+# equation of line between x1,y1 and x2,y2 is Ax+By+C=0
+# where A=(y1-y2), B=(x2-x1), C=-(A*x1+B*y1)
+# Dist=abs(A*x1+B*y1+C)/sqrt(A^2+B^2+C^2)
+aa=`echo "scale=10; ($y1 - $y2)/1" | bc`
+bb=`echo "scale=10; ($x2 - $x1)/1" | bc`
+cc=`echo "scale=10; -($aa*$x1 + $bb*$y1)/1" | bc`
+ir=`echo "scale=10; 1/sqrt($aa*$aa + $bb*$bb + $cc*$cc)" | bc`
+#echo "aa=$aa; bb=$bb; cc=$cc; ir=$ir"
+
+# increment from appropriate end to bin with max count
+# and compute dist and save bin where dist is max
+dist=0
+if [ $x2 -eq $startbin ]; then
+	i=$startbin
+	while [ $i -lt $maxbin ]; do
+		x0=$i
+		y0=${ncountArr[$i]}
+		dd=`echo "scale=10; $ir*($aa*$x0 + $bb*$y0 + $cc)" | bc`
+		ddabs=`echo "scale=10; sqrt($dd*$dd)" | bc`
+		test=`echo "$ddabs > $dist && $dd > 0" | bc`
+		if [ $test -eq 1 ]; then
+			distbin=$i
+			dist=$ddabs
+		fi
+#echo "x0=$x0; y0=$y0; distbin=$distbin; dd=$dd; ddabs=$ddabs; test=$test; dist=$dist"
+		i=`expr $i + 1`
+	done
+else
+	i=$endbin
+	while [ $i -gt $maxbin ]; do
+		x0=$i
+		y0=${ncountArr[$i]}
+		dd=`echo "scale=10; $ir*($aa*$x0 + $bb*$y0 + $cc)" | bc`
+		ddabs=`echo "scale=10; sqrt($dd*$dd)" | bc`
+		test=`echo "$ddabs > $dist && $dd < 0" | bc`
+		if [ $test -eq 1 ]; then
+			distbin=$i
+			dist=$ddabs
+		fi
+#echo "x0=$x0; y0=$y0; distbin=$distbin; dd=$dd; ddabs=$ddabs; test=$test; dist=$dist"
+		i=`expr $i - 1`
+	done
+fi
+
+# set threshold to value (0 to 255) of bin where dist is max
+x0=$distbin
+y0=${ncountArr[$distbin]}
+#echo "x0=$x0; y0=$y0"
+
+# convert threshold value to range 0 to 100
+threshpct=`convert xc: -format "%[fx:100*$x0/255]" info:`
+
+
+echo "Thresholding Image At $threshpct%"
+# threshold image
+convert $tmpA1 -threshold $threshpct% $outfile
+echo ""
+
+
+if [ "$graph" != "" ]; then
+	getTriangleLines
+	convert $tmpA1 -define histogram:unique-colors=false histogram:- | \
+		convert - -negate \
+		-stroke blue -strokewidth 1 -draw "line $xx1,$yy1 $xx2,$yy2" \
+		-stroke green1 -strokewidth 1 -draw "line $xx0,$yy0 $xx3,$yy3" \
+		-stroke red -strokewidth 1 -draw "line $xx0,0 $xx0,200" \
+		-background gray -splice 0x30 \
+		-fill white -stroke white -strokewidth 1 \
+		-font ArialB -pointsize 24 \
+		-draw "text 4,22 'threshold=$threshpct%'" -resize 50% \
+		-bordercolor gray50 -border 5 \
+		$histfile
+fi
+
+
+if [ "$graph" = "view" ]; then
+	convert $histfile x:
+	rm -f $histfile
+fi
+
+exit 0
+
+
+

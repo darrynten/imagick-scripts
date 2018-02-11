@@ -1,0 +1,10 @@
+Fred's ImageMagick Scripts from http://www.fmwconcepts.com/imagemagick/index.php
+
+Since site it is slow and down sometimes,
+here is a mirror of all useful imagemagick scripts from that site.
+
+# Note
+
+I had a hard time fixing a composer issue so hard forked to fix it.
+
+Original fork: https://github.com/mxnr/imagic-scripts

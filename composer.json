@@ -1,0 +1,17 @@
+{
+    "name": "darrynten/imagick-scripts",
+    "description": "Mirror of Fred's ImageMagick Scripts",
+    "version": "1.0.1",
+    "type": "library",
+    "authors": [
+        {
+            "name": "Dmitry Semenov",
+            "email": "mxnr@cloud.upwork.com"
+        },
+        {
+            "name": "Darryn Ten",
+            "email": "darryn.ten@gmail.com"
+        }
+    ],
+    "require": {}
+}

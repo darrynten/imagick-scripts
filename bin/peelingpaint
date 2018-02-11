@@ -1,0 +1,3 @@
+<br />
+<b>Warning</b>:  mysql_pconnect() [<a href='function.mysql-pconnect'>function.mysql-pconnect</a>]: Lost connection to MySQL server at 'reading authorization packet', system error: 0 in <b>/home/content/f/m/w/fmw42/html/imagemagick/Connections/im_counters.php</b> on line <b>10</b><br />
+Lost connection to MySQL server at 'reading authorization packet', system error: 0

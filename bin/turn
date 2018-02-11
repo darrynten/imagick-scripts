@@ -1,0 +1,229 @@
+#!/bin/bash
+#
+# Developed by Fred Weinhaus 6/22/2011 .......... revised 6/22/2011
+#
+# USAGE: turn [-a angle] [-f format] infile outfile
+# USAGE: turn [-h or -help]
+#
+# OPTIONS:
+#
+# -a      angle			clockwise angle of rotation; 0<=float<=360; default=0
+# -f      format        format for the output; choices are aspect (a) or 
+#                       square (s); default=aspect
+# 
+# 
+###
+#
+# NAME: TURN 
+# 
+# PURPOSE: To simultaneously rotate and crop an image to eliminate any 
+# background.
+# 
+# DESCRIPTION: TURN simultaneously rotate and crop an image to eliminate any 
+# background. Two methods are available: preserve the input image's w:h 
+# aspect ratio in the output or make the output square. 
+# 
+# OPTIONS: 
+# 
+# -a angle ... ANGLE of rotation. Values are floats in the range of 0 to 360 
+# degrees.
+# 
+# -f format ... FORMAT for the output image. The choices are: aspect (a) or 
+# square (s). Format=aspect preserves the input image's w:h aspect ratio. 
+# Format=square makes the output square.
+# 
+# Requirement: IM 6.3.6-1 or higher due to the use of 
+# -set distort:viewport WxH+X+Y
+# 
+# CAVEAT: No guarantee that this script will work on all platforms, 
+# nor that trapping of inconsistent parameters is complete and 
+# foolproof. Use At Your Own Risk. 
+# 
+######
+#
+
+# set default values
+angle=0  			# rotation angle
+format="aspect"		# output format
+vp="black"          # virtual pixel value
+
+# set directory for temporary files
+dir="."    # suggestions are dir="." or dir="/tmp"
+
+# set up functions to report Usage and Usage with Description
+PROGNAME=`type $0 | awk '{print $3}'`  # search for executable on path
+PROGDIR=`dirname $PROGNAME`            # extract directory of program
+PROGNAME=`basename $PROGNAME`          # base name of program
+usage1() 
+	{
+	echo >&2 ""
+	echo >&2 "$PROGNAME:" "$@"
+	sed >&2 -n '/^###/q;  /^#/!q;  s/^#//;  s/^ //;  4,$p' "$PROGDIR/$PROGNAME"
+	}
+usage2() 
+	{
+	echo >&2 ""
+	echo >&2 "$PROGNAME:" "$@"
+	sed >&2 -n '/^######/q;  /^#/!q;  s/^#*//;  s/^ //;  4,$p' "$PROGDIR/$PROGNAME"
+	}
+
+
+# function to report error messages
+errMsg()
+	{
+	echo ""
+	echo $1
+	echo ""
+	usage1
+	exit 1
+	}
+
+
+# function to test for minus at start of value of second part of option 1 or 2
+checkMinus()
+	{
+	test=`echo "$1" | grep -c '^-.*$'`   # returns 1 if match; 0 otherwise
+    [ $test -eq 1 ] && errMsg "$errorMsg"
+	}
+
+# test for correct number of arguments and get values
+if [ $# -eq 0 ]
+	then
+	# help information
+   echo ""
+   usage2
+   exit 0
+elif [ $# -gt 6 ]
+	then
+	errMsg "--- TOO MANY ARGUMENTS WERE PROVIDED ---"
+else
+	while [ $# -gt 0 ]
+		do
+			# get parameter values
+			case "$1" in
+		  -h|-help)    # help information
+					   echo ""
+					   usage2
+					   exit 0
+					   ;;
+				-a)    # get angle
+					   shift  # to get the next parameter
+					   # test if parameter starts with minus sign 
+					   errorMsg="--- INVALID ANGLE SPECIFICATION ---"
+					   checkMinus "$1"
+					   angle=`expr "$1" : '\([.0-9]*\)'`
+					   [ "$angle" = "" ] && errMsg "--- ANGLE=$angle MUST BE A NON-NEGATIVE INTEGER ---"
+		   			   testA=`echo "$angle < 0" | bc`
+		   			   testB=`echo "$angle > 360" | bc`
+					   [ $testA -eq 1 -o $testB -eq 1 ] && errMsg "--- ANGLE=$angle MUST BE A FLOAT BETWEEN 0 AND 360 ---"
+					   ;;
+				-f)    # get  format
+					   shift  # to get the next parameter
+					   # test if parameter starts with minus sign 
+					   errorMsg="--- INVALID FORMAT SPECIFICATION ---"
+					   checkMinus "$1"
+					   format="$1"
+					   format=`echo "$format" | tr "[:upper:]" "[:lower:]"`
+					   case "$format" in 
+					   		aspect|a) format="aspect" ;;
+					   		square|s) format="square" ;;
+					   		*) errMsg "--- FORMAT=$format IS AN INVALID VALUE ---" 
+					   	esac
+					   ;;
+				 -)    # STDIN and end of arguments
+					   break
+					   ;;
+				-*)    # any other - argument
+					   errMsg "--- UNKNOWN OPTION ---"
+					   ;;
+		     	 *)    # end of arguments
+					   break
+					   ;;
+			esac
+			shift   # next option
+	done
+	#
+	# get infile and outfile
+	infile=$1
+	outfile=$2
+fi
+
+# test that infile provided
+[ "$infile" = "" ] && errMsg "NO INPUT FILE SPECIFIED"
+
+# test that outfile provided
+[ "$outfile" = "" ] && errMsg "NO OUTPUT FILE SPECIFIED"
+
+tmpA1="$dir/turn_1_$$.mpc"
+tmpB1="$dir/turn_1_$$.cache"
+trap "rm -f $tmpA1 $tmpB1; exit 0" 0
+trap "rm -f $tmpA1 $tmpB1; exit 1" 1 2 3 15
+
+# test input image
+convert -quiet -regard-warnings "$infile" +repage "$tmpA1" ||
+	errMsg "--- FILE $infile DOES NOT EXIST OR IS NOT AN ORDINARY FILE, NOT READABLE OR HAS ZERO SIZE ---"
+
+# get image width, height and mode of aspect
+w=`convert $tmpA1 -ping -format "%w" info:`
+h=`convert $tmpA1 -ping -format "%h" info:`
+[ $w -ge $h ] && mode="landscape" || mode="portrait"
+
+# evaluate asbolute value sin and cos of angle so that don't have to change sign for each quadrant
+asang=`convert xc: -format "%[fx:abs(sin($angle*pi/180))]" info:`
+acang=`convert xc: -format "%[fx:abs(cos($angle*pi/180))]" info:`
+
+if [ "$mode" = "landscape" ]; then
+	a=$w
+	b=$h
+	wnum=`convert xc: -format "%[fx:$a*$b]" info:`
+	hnum=`convert xc: -format "%[fx:$b*$b]" info:`
+else
+	a=$h
+	b=$w
+	wnum=`convert xc: -format "%[fx:$b*$b]" info:`
+	hnum=`convert xc: -format "%[fx:$a*$b]" info:`
+fi
+
+#echo "w=$w; h=$h; mode=$mode; angle=$angle; asang=$asing acang=$acang"
+#echo "a=$a; b=$b"
+
+if [ "$format" = "aspect" ]; then
+
+	ww=`convert xc: -format "%[fx:$wnum/($a*$asang+$b*$acang)]" info:`
+	hh=`convert xc: -format "%[fx:$hnum/($a*$asang+$b*$acang)]" info:`
+
+elif [ "$format" = "square" ]; then
+
+	ww=`convert xc: -format "%[fx:$b/($asang+$acang)]" info:`
+	hh=$ww
+
+fi
+
+ww=`convert xc: -format "%[fx:floor($ww)]" info:`
+hh=`convert xc: -format "%[fx:floor($hh)]" info:`
+xoff=`convert xc: -format "%[fx:ceil(($w-$ww)/2)]" info:`
+yoff=`convert xc: -format "%[fx:ceil(($h-$hh)/2)]" info:`
+#echo "ww=$ww; hh=$hh; xoff=$xoff; yoff=$yoff"
+
+
+# old method - get crop geometry for viewport
+: <<COMMENT
+[ $xoff -lt 0 ] && xsign="-" || xsign="+"
+[ $yoff -lt 0 ] && ysign="-" || ysign="+"
+xoff=`convert xc: -format "%[fx:abs($xoff))]" info:`
+yoff=`convert xc: -format "%[fx:abs($yoff))]" info:`
+geometry="${ww}x${hh}${xsign}${xoff}${ysign}${yoff}"
+echo "geometry=$geometry"
+COMMENT
+
+
+# new method - get crop geometry for viewport
+# thanks to Anthony Thyssen for this tip
+geometry=`printf "%dx%d%+d%+d"  $ww $hh $xoff $yoff`
+
+# process image
+# thanks to Anthony Thyssen for this tip
+convert $tmpA1 -set option:distort:viewport $geometry -virtual-pixel $vp \
+	+distort SRT $angle +repage $outfile
+
+exit 0
